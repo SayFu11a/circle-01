@@ -226,41 +226,36 @@ const timeSlices = [
   },
 ];
 
-const RADIUS = 220; // радиус окружности для точек, px
-const RIGHT_GAP = 18;
+const RADIUS = 220;
+const RIGHT_GAP = 30;
 const ROT_DUR = 0.6;
 
 const POINT_R = 8;
 const ACTIVE_R = 16;
-// const POINT_HOVER_R = 12;
-// const ACTIVE_HOVER_R = 20;
 
 const HOVER_R = ACTIVE_R;
-const CLICK_R = 20;
 const LABEL_FADE = 0.25;
 
 export default function HistoricalDatesBlock() {
   const [activeIdx, setActiveIdx] = useState(0);
   const [rotDeg, setRotDeg] = useState(0);
 
-  const groupRef = useRef<SVGGElement>(null);
-  const angleRef = useRef(0);
-  const isAnimating = useRef(false);
-
-  const pointTLRef = useRef<gsap.core.Timeline | null>(null);
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [lockedIdx, setLockedIdx] = useState<number | null>(null);
 
   const [yearAnim, setYearAnim] = useState({
     start: timeSlices[0].yearStart,
     end: timeSlices[0].yearEnd,
   });
 
+  const groupRef = useRef<SVGGElement>(null);
+  const angleRef = useRef(0);
+  const isAnimating = useRef(false);
   const numbersTLRef = useRef<gsap.core.Timeline | null>(null);
   const labelRefs = useRef<Array<SVGGElement | null>>([]);
   const activePointRef = useRef<SVGCircleElement | null>(null);
-
-  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
-  const [lockedIdx, setLockedIdx] = useState<number | null>(null);
   const hoverMarkerRef = useRef<SVGCircleElement | null>(null);
+  const hoverTextRef = useRef<SVGTextElement | null>(null);
 
   const slicesCount = timeSlices.length;
 
@@ -288,22 +283,16 @@ export default function HistoricalDatesBlock() {
   const handleSwitch = (dir: number) => {
     if (isAnimating.current) return;
 
-    setHoveredIdx(null);
-    setLockedIdx(null);
-
     const nextIdx = (activeIdx + dir + slicesCount) % slicesCount;
     const angle = (-360 / slicesCount) * dir;
+    const dur = ROT_DUR;
+
+    setHoveredIdx(nextIdx);
+    setLockedIdx(nextIdx);
+
     angleRef.current += angle;
 
     fadeLabels(activeIdx, nextIdx, { fadeInNext: true });
-
-    if (activePointRef.current) {
-      gsap.to(activePointRef.current, {
-        opacity: 0,
-        duration: LABEL_FADE,
-        ease: "power2.out",
-      });
-    }
 
     const toStart = timeSlices[nextIdx].yearStart;
     const toEnd = timeSlices[nextIdx].yearEnd;
@@ -331,12 +320,54 @@ export default function HistoricalDatesBlock() {
       vals,
       {
         end: toEnd,
-        duration: ROT_DUR - 0.08,
+        duration: Math.max(0, dur - 0.08),
       },
       0.08
     );
 
     numbersTLRef.current = tlNums;
+
+    if (activePointRef.current) {
+      gsap.killTweensOf(activePointRef.current);
+      gsap.to(activePointRef.current, {
+        scale: 0.5,
+        opacity: 0.35,
+        duration: dur,
+        ease: "power2.out",
+        transformOrigin: "50% 50%",
+      });
+    }
+
+    // Ждем один кадр, чтобы hoverMarker успел смонтироваться после setHoveredIdx
+    requestAnimationFrame(() => {
+      if (hoverMarkerRef.current) {
+        gsap.killTweensOf(hoverMarkerRef.current);
+        gsap.set(hoverMarkerRef.current, {
+          opacity: 0.15,
+          scale: 0,
+          transformOrigin: "50% 50%",
+        });
+        gsap.to(hoverMarkerRef.current, {
+          opacity: 1,
+          scale: 1,
+          duration: dur,
+          ease: "power3.out",
+        });
+      }
+      if (hoverTextRef.current) {
+        gsap.set(hoverTextRef.current, {
+          opacity: 0,
+          scale: 0.8,
+          transformOrigin: "50% 50%",
+        });
+        gsap.to(hoverTextRef.current, {
+          opacity: 1,
+          scale: 1,
+          duration: dur,
+          ease: "power3.out",
+        });
+      }
+    });
 
     isAnimating.current = true;
 
@@ -354,13 +385,16 @@ export default function HistoricalDatesBlock() {
         isAnimating.current = false;
         setYearAnim({ start: toStart, end: toEnd });
 
-        if (activePointRef.current) {
-          gsap.to(activePointRef.current, {
-            opacity: 1,
-            duration: LABEL_FADE,
-            ease: "power2.out",
-          });
-        }
+        requestAnimationFrame(() => {
+          if (activePointRef.current) {
+            gsap.set(activePointRef.current, { scale: 1, opacity: 1 });
+          }
+          if (hoverMarkerRef.current) {
+            gsap.set(hoverMarkerRef.current, { scale: 0, opacity: 0 });
+          }
+          setLockedIdx(null);
+          setHoveredIdx(null);
+        });
       },
     });
   };
@@ -382,30 +416,54 @@ export default function HistoricalDatesBlock() {
 
     fadeLabels(activeIdx, targetIdx, { fadeInNext: false });
 
-    // активное кольцо исчезает на время
+    // активное кольцо исчезает на время плавно через scale/opacity
     if (activePointRef.current) {
+      gsap.killTweensOf(activePointRef.current);
       gsap.to(activePointRef.current, {
-        opacity: 0,
-        duration: LABEL_FADE,
+        scale: 0.5,
+        opacity: 0.35,
+        duration: dur,
         ease: "power2.out",
+        transformOrigin: "50% 50%",
       });
     }
 
-    // увеличить выбранный (hover) маркер на время анимации
-    if (hoverMarkerRef.current) {
-      gsap.to(hoverMarkerRef.current, {
-        attr: { r: CLICK_R },
-        duration: 0.2,
-        ease: "power3.out",
-      });
-    }
+    requestAnimationFrame(() => {
+      if (hoverMarkerRef.current) {
+        gsap.killTweensOf(hoverMarkerRef.current);
+        gsap.set(hoverMarkerRef.current, {
+          opacity: 0.15,
+          scale: 0,
+          transformOrigin: "50% 50%",
+        });
+        gsap.to(hoverMarkerRef.current, {
+          opacity: 1,
+          scale: 1,
+          duration: dur,
+          ease: "power3.out",
+        });
+      }
+      if (hoverTextRef.current) {
+        gsap.set(hoverTextRef.current, {
+          opacity: 0,
+          scale: 0.8,
+          transformOrigin: "50% 50%",
+        });
+        gsap.to(hoverTextRef.current, {
+          opacity: 1,
+          scale: 1,
+          duration: dur,
+          ease: "power3.out",
+        });
+      }
+    });
 
     const toStart = timeSlices[targetIdx].yearStart;
     const toEnd = timeSlices[targetIdx].yearEnd;
     const vals = { start: yearAnim.start, end: yearAnim.end };
 
     numbersTLRef.current?.kill();
-    const tlNums = gsap.timeline({ defaults: { ease: "power3.out" } }); // : масштабируем длительность
+    const tlNums = gsap.timeline({ defaults: { ease: "power3.out" } });
     tlNums.to(
       vals,
       {
@@ -458,19 +516,12 @@ export default function HistoricalDatesBlock() {
 
         // вернуть активное кольцо
         if (activePointRef.current) {
-          gsap.to(activePointRef.current, {
-            opacity: 1,
-            duration: LABEL_FADE,
-            ease: "power2.out",
-          });
+          gsap.set(activePointRef.current, { scale: 1, opacity: 1 });
         }
 
         // скрыть hover-маркер и снять фиксацию
         if (hoverMarkerRef.current) {
-          gsap.to(hoverMarkerRef.current, {
-            attr: { r: HOVER_R },
-            duration: 0.1,
-          });
+          gsap.set(hoverMarkerRef.current, { scale: 0, opacity: 0 });
         }
         setLockedIdx(null);
         setHoveredIdx(null);
@@ -507,6 +558,7 @@ export default function HistoricalDatesBlock() {
   };
 
   const hoverIdx = lockedIdx ?? hoveredIdx;
+  const hoverP = hoverIdx !== null ? getRotatedPoint(hoverIdx, rotDeg) : null; // удалить
 
   return (
     <div className={styles.block}>
@@ -541,10 +593,19 @@ export default function HistoricalDatesBlock() {
                 onMouseEnter={(e) => {
                   if (isAnimating.current) return;
                   setHoveredIdx(idx);
-                  // размер hover-маркера будет HOVER_R
-                  if (hoverMarkerRef.current) {
-                    gsap.set(hoverMarkerRef.current, { attr: { r: HOVER_R } });
-                  }
+
+                  requestAnimationFrame(() => {
+                    if (hoverMarkerRef.current) {
+                      gsap.set(hoverMarkerRef.current, {
+                        scale: 1,
+                        opacity: 1,
+                        transformOrigin: "50% 50%",
+                      });
+                    }
+                    if (hoverTextRef.current) {
+                      gsap.set(hoverTextRef.current, { opacity: 1 });
+                    }
+                  });
                 }}
                 onMouseLeave={() => {
                   if (lockedIdx === idx) return; // во время клика не скрываем
@@ -561,22 +622,6 @@ export default function HistoricalDatesBlock() {
               r={ACTIVE_R}
               className={styles.activePoint}
               style={{ pointerEvents: "none" }}
-              //   onMouseEnter={(e) => {
-              //     if (isAnimating.current) return;
-              //     gsap.to(e.currentTarget, {
-              //       attr: { r: ACTIVE_HOVER_R },
-              //       duration: 0.2,
-              //       ease: "power3.out",
-              //     });
-              //   }}
-              //   onMouseLeave={(e) => {
-              //     gsap.to(e.currentTarget, {
-              //       attr: { r: ACTIVE_R },
-              //       duration: 0.2,
-              //       ease: "power3.out",
-              //     });
-              //   }}
-              //   onClick={() => handleGoTo(activeIdx)}
             />
 
             {hoverIdx !== null && hoverIdx !== activeIdx && (
@@ -593,7 +638,7 @@ export default function HistoricalDatesBlock() {
 
           <g pointerEvents="none">
             {timeSlices.map((slice, i) => {
-              if (i !== activeIdx) return null;
+              if (i !== activeIdx && i !== hoverIdx) return null;
               const p = getRotatedPoint(i, rotDeg);
               return (
                 <g key={i} ref={(el) => (labelRefs.current[i] = el)}>
@@ -608,17 +653,18 @@ export default function HistoricalDatesBlock() {
                   >
                     {i + 1}
                   </text>
-                  {/* НАЗВАНИЕ справа от кружка, без наклона */}
-                  <text
-                    x={p.x + RIGHT_GAP}
-                    y={p.y}
-                    className={styles.labelText}
-                    textAnchor="start"
-                    dominantBaseline="central"
-                    style={{ opacity: 1 }}
-                  >
-                    {slice.label}
-                  </text>
+                  {i !== activeIdx ? null : (
+                    <text
+                      x={p.x + RIGHT_GAP}
+                      y={p.y}
+                      className={styles.labelText}
+                      textAnchor="start"
+                      dominantBaseline="central"
+                      style={{ opacity: 1 }}
+                    >
+                      {slice.label}
+                    </text>
+                  )}
                 </g>
               );
             })}
