@@ -230,27 +230,80 @@ const RADIUS = 220; // радиус окружности для точек, px
 const RIGHT_GAP = 18;
 const ROT_DUR = 0.6;
 
+const POINT_R = 8;
+const ACTIVE_R = 16;
+// const POINT_HOVER_R = 12;
+// const ACTIVE_HOVER_R = 20;
+
+const HOVER_R = ACTIVE_R;
+const CLICK_R = 20;
+const LABEL_FADE = 0.25;
+
 export default function HistoricalDatesBlock() {
   const [activeIdx, setActiveIdx] = useState(0);
-  const slicesCount = timeSlices.length;
+  const [rotDeg, setRotDeg] = useState(0);
+
   const groupRef = useRef<SVGGElement>(null);
   const angleRef = useRef(0);
   const isAnimating = useRef(false);
-  const [rotDeg, setRotDeg] = useState(0);
+
+  const pointTLRef = useRef<gsap.core.Timeline | null>(null);
 
   const [yearAnim, setYearAnim] = useState({
     start: timeSlices[0].yearStart,
     end: timeSlices[0].yearEnd,
   });
+
   const numbersTLRef = useRef<gsap.core.Timeline | null>(null);
+  const labelRefs = useRef<Array<SVGGElement | null>>([]);
+  const activePointRef = useRef<SVGCircleElement | null>(null);
+
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  const [lockedIdx, setLockedIdx] = useState<number | null>(null);
+  const hoverMarkerRef = useRef<SVGCircleElement | null>(null);
+
+  const slicesCount = timeSlices.length;
+
+  const fadeLabels = (
+    fromIdx: number,
+    toIdx: number,
+    opts: { fadeInNext: boolean }
+  ) => {
+    const fromEl = labelRefs.current[fromIdx];
+    const toEl = labelRefs.current[toIdx];
+    if (fromEl)
+      gsap.to(fromEl, { opacity: 0, duration: LABEL_FADE, ease: "power2.out" });
+    if (opts.fadeInNext && toEl) {
+      gsap.set(toEl, { opacity: 0 });
+      gsap.to(toEl, {
+        opacity: 1,
+        duration: LABEL_FADE,
+        ease: "power2.out",
+        delay: 0.08,
+      });
+    }
+  };
 
   // Функция для переключения интервала
   const handleSwitch = (dir: number) => {
     if (isAnimating.current) return;
 
+    setHoveredIdx(null);
+    setLockedIdx(null);
+
     const nextIdx = (activeIdx + dir + slicesCount) % slicesCount;
     const angle = (-360 / slicesCount) * dir;
     angleRef.current += angle;
+
+    fadeLabels(activeIdx, nextIdx, { fadeInNext: true });
+
+    if (activePointRef.current) {
+      gsap.to(activePointRef.current, {
+        opacity: 0,
+        duration: LABEL_FADE,
+        ease: "power2.out",
+      });
+    }
 
     const toStart = timeSlices[nextIdx].yearStart;
     const toEnd = timeSlices[nextIdx].yearEnd;
@@ -271,16 +324,16 @@ export default function HistoricalDatesBlock() {
           });
         },
       },
-      0 // старт сразу
+      0
     );
 
     tlNums.to(
       vals,
       {
         end: toEnd,
-        duration: ROT_DUR - 0.08, // чтобы финиш совпадал с поворотом
+        duration: ROT_DUR - 0.08,
       },
-      0.08 // небольшая задержка правой даты
+      0.08
     );
 
     numbersTLRef.current = tlNums;
@@ -300,18 +353,138 @@ export default function HistoricalDatesBlock() {
         setActiveIdx(nextIdx);
         isAnimating.current = false;
         setYearAnim({ start: toStart, end: toEnd });
+
+        if (activePointRef.current) {
+          gsap.to(activePointRef.current, {
+            opacity: 1,
+            duration: LABEL_FADE,
+            ease: "power2.out",
+          });
+        }
+      },
+    });
+  };
+
+  const handleGoTo = (targetIdx: number) => {
+    if (isAnimating.current || targetIdx === activeIdx) return;
+
+    setHoveredIdx(targetIdx);
+    setLockedIdx(targetIdx);
+
+    const total = slicesCount;
+    const forward = (targetIdx - activeIdx + total) % total;
+    const backward = forward - total;
+    const steps = Math.abs(backward) < Math.abs(forward) ? backward : forward;
+    const angle = (-360 / total) * steps;
+    const dur = ROT_DUR * Math.abs(steps);
+
+    angleRef.current += angle;
+
+    fadeLabels(activeIdx, targetIdx, { fadeInNext: false });
+
+    // активное кольцо исчезает на время
+    if (activePointRef.current) {
+      gsap.to(activePointRef.current, {
+        opacity: 0,
+        duration: LABEL_FADE,
+        ease: "power2.out",
+      });
+    }
+
+    // увеличить выбранный (hover) маркер на время анимации
+    if (hoverMarkerRef.current) {
+      gsap.to(hoverMarkerRef.current, {
+        attr: { r: CLICK_R },
+        duration: 0.2,
+        ease: "power3.out",
+      });
+    }
+
+    const toStart = timeSlices[targetIdx].yearStart;
+    const toEnd = timeSlices[targetIdx].yearEnd;
+    const vals = { start: yearAnim.start, end: yearAnim.end };
+
+    numbersTLRef.current?.kill();
+    const tlNums = gsap.timeline({ defaults: { ease: "power3.out" } }); // : масштабируем длительность
+    tlNums.to(
+      vals,
+      {
+        start: toStart,
+        duration: dur,
+        onUpdate: () => {
+          setYearAnim({
+            start: Math.round(vals.start),
+            end: Math.round(vals.end),
+          });
+        },
+      },
+      0
+    );
+    tlNums.to(
+      vals,
+      {
+        end: toEnd,
+        duration: Math.max(0, dur - 0.08),
+      },
+      0.08
+    );
+    numbersTLRef.current = tlNums;
+
+    isAnimating.current = true;
+
+    gsap.to(groupRef.current, {
+      rotation: angleRef.current,
+      svgOrigin: `${RADIUS} ${RADIUS}`,
+      duration: dur,
+      ease: "power2.out",
+      onUpdate: () => {
+        const r = gsap.getProperty(groupRef.current!, "rotation") as number;
+        setRotDeg(r);
+      },
+      onComplete: () => {
+        setActiveIdx(targetIdx);
+        isAnimating.current = false;
+        setYearAnim({ start: toStart, end: toEnd });
+
+        // показать подпись новой активной в конце
+        const toEl = labelRefs.current[targetIdx];
+        if (toEl) {
+          gsap.to(toEl, {
+            opacity: 1,
+            duration: LABEL_FADE,
+            ease: "power2.out",
+          });
+        }
+
+        // вернуть активное кольцо
+        if (activePointRef.current) {
+          gsap.to(activePointRef.current, {
+            opacity: 1,
+            duration: LABEL_FADE,
+            ease: "power2.out",
+          });
+        }
+
+        // скрыть hover-маркер и снять фиксацию
+        if (hoverMarkerRef.current) {
+          gsap.to(hoverMarkerRef.current, {
+            attr: { r: HOVER_R },
+            duration: 0.1,
+          });
+        }
+        setLockedIdx(null);
+        setHoveredIdx(null);
       },
     });
   };
 
   // Инициализация поворота при монтировании/смене индекса
   useEffect(() => {
-    gsap.set(groupRef.current, {
-      rotation: angleRef.current,
-      svgOrigin: `${RADIUS} ${RADIUS}`,
+    labelRefs.current.forEach((el, i) => {
+      if (!el) return;
+      gsap.set(el, { opacity: i === activeIdx ? 1 : 0 });
     });
-    setRotDeg(angleRef.current);
-  }, [activeIdx, slicesCount]);
+  }, []);
 
   // Вычисление координат точек на окружности
   const points = Array.from({ length: slicesCount }, (_, i) => {
@@ -332,6 +505,8 @@ export default function HistoricalDatesBlock() {
       a,
     };
   };
+
+  const hoverIdx = lockedIdx ?? hoveredIdx;
 
   return (
     <div className={styles.block}>
@@ -357,25 +532,71 @@ export default function HistoricalDatesBlock() {
                 key={idx}
                 cx={pt.x}
                 cy={pt.y}
-                r={8}
+                r={POINT_R}
                 className={styles.point}
-                style={activeIdx === idx ? { opacity: 1 } : { opacity: 0.3 }}
+                style={{
+                  opacity: activeIdx === idx ? 1 : 0.3,
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => {
+                  if (isAnimating.current) return;
+                  setHoveredIdx(idx);
+                  // размер hover-маркера будет HOVER_R
+                  if (hoverMarkerRef.current) {
+                    gsap.set(hoverMarkerRef.current, { attr: { r: HOVER_R } });
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (lockedIdx === idx) return; // во время клика не скрываем
+                  setHoveredIdx(null);
+                }}
+                onClick={() => handleGoTo(idx)}
               />
             ))}
             {/* Активная точка (маркер) */}
             <circle
+              ref={activePointRef}
               cx={points[activeIdx]?.x}
               cy={points[activeIdx]?.y}
-              r={16}
+              r={ACTIVE_R}
               className={styles.activePoint}
+              style={{ pointerEvents: "none" }}
+              //   onMouseEnter={(e) => {
+              //     if (isAnimating.current) return;
+              //     gsap.to(e.currentTarget, {
+              //       attr: { r: ACTIVE_HOVER_R },
+              //       duration: 0.2,
+              //       ease: "power3.out",
+              //     });
+              //   }}
+              //   onMouseLeave={(e) => {
+              //     gsap.to(e.currentTarget, {
+              //       attr: { r: ACTIVE_R },
+              //       duration: 0.2,
+              //       ease: "power3.out",
+              //     });
+              //   }}
+              //   onClick={() => handleGoTo(activeIdx)}
             />
+
+            {hoverIdx !== null && hoverIdx !== activeIdx && (
+              <circle
+                ref={hoverMarkerRef}
+                cx={points[hoverIdx].x}
+                cy={points[hoverIdx].y}
+                r={HOVER_R}
+                className={styles.activePoint}
+                style={{ pointerEvents: "none" }}
+              />
+            )}
           </g>
 
           <g pointerEvents="none">
             {timeSlices.map((slice, i) => {
+              if (i !== activeIdx) return null;
               const p = getRotatedPoint(i, rotDeg);
               return (
-                <g key={i}>
+                <g key={i} ref={(el) => (labelRefs.current[i] = el)}>
                   {/* ЦИФРА в центре точки */}
                   <text
                     x={p.x}
@@ -383,11 +604,10 @@ export default function HistoricalDatesBlock() {
                     className={styles.labelNum}
                     textAnchor="middle"
                     dominantBaseline="central"
-                    style={i === activeIdx ? { opacity: 1 } : { opacity: 0.8 }}
+                    style={{ opacity: 1 }}
                   >
                     {i + 1}
                   </text>
-
                   {/* НАЗВАНИЕ справа от кружка, без наклона */}
                   <text
                     x={p.x + RIGHT_GAP}
@@ -395,7 +615,7 @@ export default function HistoricalDatesBlock() {
                     className={styles.labelText}
                     textAnchor="start"
                     dominantBaseline="central"
-                    style={i === activeIdx ? { opacity: 1 } : { opacity: 0.7 }}
+                    style={{ opacity: 1 }}
                   >
                     {slice.label}
                   </text>
