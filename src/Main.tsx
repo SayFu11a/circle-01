@@ -1,7 +1,7 @@
 import React, { Component } from "react";
 import { App } from "./App";
-// import { Hello } from "./components/Hello";
 import HistoricalDatesBlock from "./components/HistoricalDatesBlock";
+import { timeSlicesMock } from "./components/HistoricalDatesBlock/data/timeSlices.mock";
 
 export interface MainProps {
   app: App;
@@ -17,7 +17,7 @@ export class Main extends Component<MainProps, MainState> {
   public render(): JSX.Element {
     return (
       <>
-        <HistoricalDatesBlock />
+        <HistoricalDatesBlock slices={timeSlicesMock} />
       </>
     );
   }
